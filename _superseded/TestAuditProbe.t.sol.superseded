@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.0;
+
+import "./Base.sol";
+
+/// @dev 审计探针：验证「拍卖未铸造即结束」后 name 是否永久占用
+contract TestAuditProbe is Base {
+    function testProbe_namePermanentlyReservedAfterTimeoutRefund() public {
+        // 走完整链路到 settle
+        address a = _settledAuction("probe1", 10e18, 12e18);
+        uint256 rid = 0;
+
+        // 该 name 已被占用
+        require(factory.requestOfName("probe1") == rid + 1, "should be reserved");
+
+        // 从未铸造 → 45 天后赢家退款
+        vm.warp(block.timestamp + 46 days);
+        vm.prank(BOB);
+        EnglishAuction(a).claimTimeoutRefund();
+        require(uint256(EnglishAuction(a).escrow()) == 3, "refunded");
+
+        // 拍卖已终结（Refunded）、且域名未铸造
+        require(jns._nslookup("probe1") == 0, "not minted");
+
+        // 但 name 仍被占用 → 新申请必 revert
+        vm.prank(CAROL);
+        vm.expectRevert(bytes("FAC: name has live request"));
+        factory.submitRequest("probe1", 10e18, bytes32(0));
+
+        // 且没有任何路径可释放：request.status = Created，cancelRequest 要求 Pending/Approved
+        (, , , , , JNSAuctionFactory.Status st, ) = factory.getRequest(rid);
+        require(uint256(st) == 3, "status should be Created");
+        vm.prank(ALICE);
+        vm.expectRevert(bytes("FAC: cannot cancel"));
+        factory.cancelRequest(rid);
+    }
+
+    function testProbe_namePermanentlyReservedAfterEmergencyCancel() public {
+        address a = _newAuction("probe2", 10e18, 168);
+        vm.prank(DAO);
+        factory.emergencyCancelAuction(a, "x");
+        require(jns._nslookup("probe2") == 0, "not minted");
+
+        vm.prank(CAROL);
+        vm.expectRevert(bytes("FAC: name has live request"));
+        factory.submitRequest("probe2", 10e18, bytes32(0));
+    }
+}

@@ -1,0 +1,138 @@
+════════════════════════════════════════════════════════════════════════
+ JNS 拍卖系统 · 多签执行 calldata 包（Multisig Call Package）
+ 生成：2026-09-14 · 【只读产出，未广播、未上链、未 commit】
+════════════════════════════════════════════════════════════════════════
+
+【使用说明】
+ 1. 本包所有交易均由【多签 2/3 流程】发起（多签 UI / 多签钱包）。
+ 2. calldata 已用 `cast calldata` 生成，selector 已与编译产物
+    `out/*.json` 的 methodIdentifiers 逐条核对一致。
+ 3. 地址占位（部署后替换）：
+      <FACTORY_ADDR>    = JNSAuctionFactory 部署地址
+      <REGISTRY_ADDR>   = ClaimRegistry 部署地址
+      <SUBNAME_ADDR>    = SubnameRegistry 部署地址
+      <NOTIFY_ADDR>     = NotificationService 部署地址
+    已知常量：
+      DAO 多签           = 0x4eF599b6E39D950D6Ddbd830fF5f95e06770C1B3
+      J-0（Koant）EOA    = 0x5BF50F2931688F886F46f88D5CEEDE530bB92076
+ 4. ⚠️ 多签地址是【合约、无私钥】⇒ 绝不可作 broadcast 发送者；但本包是
+    「传给多签去执行」的调用数据，调用者就是多签，正确。
+ 5. ⚠️ 下列多数 setter 的值【已在 constructor / 默认值内联】
+    （见《部署与多签执行清单》§3a），执行本包可获【显式 emit 审计留痕】，
+    非必需；但 §A-1、§A-3 两条【必须执行】。
+
+────────────────────────────────────────────────────────────────────────
+ A｜【必须执行】两条
+────────────────────────────────────────────────────────────────────────
+
+A-1  setReviewer —— 把 J-0 个人 EOA 设为审核人
+  target   : <FACTORY_ADDR>
+  函数     : setReviewer(address,bool)
+  参数     : reviewer = 0x5BF50F2931688F886F46f88D5CEEDE530bB92076
+             ok       = true
+  data     : 0xacee7127
+             0000000000000000000000005bf50f2931688f886f46f88d5ceede530bb92076
+             0000000000000000000000000000000000000000000000000000000000000001
+  [一行]   : 0xacee71270000000000000000000000005bf50f2931688f886f46f88d5ceede530bb920760000000000000000000000000000000000000000000000000000000000000001
+  预期 emit: ReviewerSet(0x5BF50F…B92076, true, ts)
+  备注     : ⚠️ 审核人【不得填多签】——否则链上 reviewer 是合约，无法映射到具体个人，
+             「审核责任到人」落空。
+
+A-3  setRegistrar —— 授权工厂登记「待铸造任务」
+  target   : <REGISTRY_ADDR>
+  函数     : setRegistrar(address,bool)
+  参数     : registrar = <FACTORY_ADDR>
+             ok        = true
+  data 模板: 0xc1bf1dcf
+             000000000000000000000000<FACTORY_ADDR_20bytes>
+             0000000000000000000000000000000000000000000000000000000000000001
+  [示例，factory 填 0x...FAC0 时]: 0xc1bf1dcf000000000000000000000000000000000000000000000000000000000000fac00000000000000000000000000000000000000000000000000000000000000001
+  预期 emit: RegistrarSet(<FACTORY_ADDR>, true, ts)
+  备注     : 不执行 ⇒ 工厂无法登记待铸造任务（放款前置已改为链上校验，见 M1，
+             故非放款阻塞项，但任务登记功能不可用）。
+
+────────────────────────────────────────────────────────────────────────
+ B｜【内联已生效，执行仅为留痕】七条
+────────────────────────────────────────────────────────────────────────
+
+B-1  setSignersRequired —— 会签人数 = 1
+  target   : <FACTORY_ADDR>
+  函数     : setSignersRequired(uint256)           selector 0xd39a3a89
+  参数     : n = 1
+  [一行]   : 0xd39a3a890000000000000000000000000000000000000000000000000000000000000001
+  预期 emit: SignersRequiredChanged(1, 1, ts)（旧值已内联为 1）
+
+B-2  setTradeFeeRate —— 二级市场费率 1.5%
+  target   : <MARKET_ADDR>
+  函数     : setTradeFeeRate(uint256)              selector 0x2730d1f9
+  参数     : newBps = 150
+  [一行]   : 0x2730d1f90000000000000000000000000000000000000000000000000000000000000096
+  预期 emit: TradeFeeRateChanged(old, 150, ts)
+  硬上限   : 500 bps（合约内 require）
+
+B-3  setTradeFeeRecipient —— 二级手续费收款方 = 多签
+  target   : <MARKET_ADDR>
+  函数     : setTradeFeeRecipient(address)         selector 0x0ce7edcc
+  参数     : newAddr = 0x4eF599…C1B3
+  [一行]   : 0x0ce7edcc0000000000000000000000004ef599b6e39d950d6ddbd830ff5f95e06770c1b3
+  预期 emit: TradeFeeRecipientChanged(old, DAO, ts)
+
+B-4  setMintFee —— 子域名铸造费 1 WJ
+  target   : <SUBNAME_ADDR>
+  函数     : setMintFee(uint256)                   selector 0xeddd0d9c
+  参数     : newFee = 1000000000000000000 (1e18)
+  [一行]   : 0xeddd0d9c0000000000000000000000000000000000000000000000000de0b6b3a7640000
+  预期 emit: MintFeeChanged(old, 1e18, ts)
+
+B-5  setMintFeeRecipient —— 子域名铸造费收款方 = 多签
+  target   : <SUBNAME_ADDR>
+  函数     : setMintFeeRecipient(address)          selector 0x3788fb6a
+  参数     : newAddr = 0x4eF599…C1B3
+  [一行]   : 0x3788fb6a0000000000000000000000004ef599b6e39d950d6ddbd830ff5f95e06770c1b3
+  预期 emit: MintFeeRecipientChanged(old, DAO, ts)
+
+B-6  setMaxDepth —— 子域名最大层级 8
+  target   : <SUBNAME_ADDR>
+  函数     : setMaxDepth(uint256)                  selector 0x8b6863fb
+  参数     : newDepth = 8
+  [一行]   : 0x8b6863fb0000000000000000000000000000000000000000000000000000000000000008
+  预期 emit: MaxDepthChanged(old, 8, ts)
+  硬上限   : MAX_DEPTH_CEILING
+
+B-7  setFeeCap —— 提醒服务费上限 1 WJ
+  target   : <NOTIFY_ADDR>
+  函数     : setFeeCap(uint256)                    selector 0x6bb07c73
+  参数     : newCap = 1000000000000000000 (1e18)
+  [一行]   : 0x6bb07c7300000000000000000000000000000000000000000000000de0b6b3a7640000
+  预期 emit: FeeCapChanged(old, 1e18, ts)
+  下限     : 0.01 WJ（合约内 require）
+
+────────────────────────────────────────────────────────────────────────
+ C｜【developer（J-53 本人）待执行】不属于本包（单列）
+────────────────────────────────────────────────────────────────────────
+  【v1 休眠】perUseFee = 0（constructor 已是 0）⇒ 无需调 setPerUseFee。
+  下列仅列【将来启用时】的 calldata，由 J-53 本人用自己钱包发起：
+  · setPerUseFee(uint256)          selector 0xd8b01d7b
+    参数 5e16 (0.05 WJ)：0xd8b01d7b00000000000000000000000000000000000000000000000000b1a2bc2ec50000
+  · setServiceFeeRecipient(address) selector 见 NotificationService ABI
+    ⇒ 二者均由 **developer（J-53）本人** 执行，多签不得代劳（收益隔离）。
+
+  【developer 变更权】沉默 = 否决（owner/多签无法发起）：
+  · transferDeveloperRole(address newDev)   [仅当前 developer]
+    ① 发起 → ② 等 7 天 → ③ acceptDeveloperRole()  [仅被提名人，+7 天窗口内]
+  · cancelDeveloperTransfer()               [仅当前 developer；延迟期内可撤]
+  · proposeDeveloper(address)  ⇒ 恒 revert（已停用）
+  · 逾期未确认 ⇒ 自动作废（非“到期自动生效”）
+    详见《部署与多签执行清单》§3c。
+
+════════════════════════════════════════════════════════════════════════
+ 汇总：本包 A 段 2 条【必执行】 + B 段 7 条【留痕可选】；C 段归 developer。
+ 全部 selector 已与编译产物 methodIdentifiers 核对一致。
+
+ 【2026-09-15 更新】X-3 必修（重名占用 + 超时退款安全阀）已落地：
+   · submitRequest 增 require(requestOfName[name]==0) —— 同名不得有第二个存活申请
+   · rejectRequest / 新增 cancelRequest 时 delete requestOfName[name]
+   · claimTimeoutRefund 改「releaseToDAO 必 revert 才放行」安全阀
+   ⇒ 【本包 calldata 无变化】：X-3 均为合约内逻辑，不涉及任何新增 setter 调用。
+     A 段仍为仅有的 2 条必执行项。
+════════════════════════════════════════════════════════════════════════
