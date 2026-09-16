@@ -5,16 +5,27 @@ import "./deps/Deps.sol";
 
 /**
  * @title  NotificationService —— JNS 域名到期/变更提醒服务（模式③ 预授权 + 按需拉取）
- * @notice 第四批交付 · 2026-09-14 · 只读核查版（未部署、未上链、未 commit）
+ * @notice 第四批交付 · 只读核查版（未部署、未上链、未 commit）
  *
  * ── 关键设计 ─────────────────────────────────────────────────────
  *  模式③：钱留在用户自己钱包。用户【显式链上授权】（authorizeForPulling，可随时 revoke），
  *         服务方按需 try 拉取，用户未授权一律跳过，绝不强扣。
  *  【不得每次提醒上链扣费】：提醒动作只写【链下记账】，按周期调用 settleBatch 批量结算。
- *  perUseFee = 0.05 WJ（即时型，每次读当前值）；monthlyFee 同期实现但【默认不启用】。
- *  单用户欠费上限 5 WJ（封顶，防无限拉取）；逐笔 try/catch 标记，不整批回滚。
- *  记账明细 hash 上链（detailHash）；getBatch / chargesOf / arrearsOf 对账只读接口。
- *  权限：serviceFeeRecipient 变更【仅 developer】；feeCap 由 owner 设，下限 0.01 WJ。
+ *
+ * ── 费率设计（【J-53 裁定·2026-09-16】三档封顶）──────────────────
+ *   ① PER_USE_FEE_CAP = 1 WJ   —— 单次提醒费硬上限
+ *                                  【constant，任何角色（含 owner/developer）均不可改】
+ *   ② MONTHLY_FEE_CAP = 30 WJ  —— 月费累计上限【constant，任何角色不可改】
+ *                                  语义【A 包月制】：当月累计扣费达 30 WJ 后，
+ *                                  当月【继续提醒、不再扣费】（不限次数，非硬截断）
+ *   ③ perUseFee                —— 单次提醒费率，可调区间 0 ~ 1 WJ；【仅 developer】可调
+ *  计价单位一律 **WJ**（J 仅作 gas）。
+ *
+ *  沿用既有【M2】裁定：owner 另可设 `feeCap`（下限 0.01 WJ）作为可下调的运营上限；
+ *  实际费率取三者最小：perUseFee / feeCap / PER_USE_FEE_CAP。
+ *  单用户单批欠费上限 5 WJ（封顶，防无限拉取）；逐笔 try/catch 标记，不整批回滚。
+ *  记账明细 hash 上链（detailHash）；getBatch / chargesOf / arrearsOf / monthlyCharged 对账只读接口。
+ *  权限：serviceFeeRecipient / perUseFee 变更【仅 developer】；两个 CAP 为常量，owner 亦不可改。
  *  模式①（预存余额）已实现 ⇒ withdrawBalance 无条件可提。
  */
 contract NotificationService is ReentrancyGuard, Ownable, DeveloperRole {
@@ -24,22 +35,33 @@ contract NotificationService is ReentrancyGuard, Ownable, DeveloperRole {
     address public constant JNS_ADDRESS = 0xf8AbF36Bb2dc525b1E566d6B42F6Fd1BB2035b89;
 
     uint256 public constant ONE_WJ = 1e18;
-    uint256 public constant FEE_CAP_FLOOR = 0.01e18;      // feeCap 绝对下限 0.01 WJ（M2）
+
+    // ═══════════ 费率三档（【J-53 裁定·2026-09-16】）═══════════
+    /// @dev ① 单次提醒费硬上限 1 WJ。【constant】任何角色（含 owner/developer）均不可改。
+    uint256 public constant PER_USE_FEE_CAP = 1e18;
+    /// @dev ② 月费累计上限 30 WJ。【constant】任何角色不可改。
+    ///      语义【A 包月制】：当月累计扣费达此值后，当月【继续提醒、不再扣费】（不限次数）。
+    uint256 public constant MONTHLY_FEE_CAP = 30e18;
+    /// @dev 月窗口长度（用于「当月累计」的分桶滚动）
+    uint256 public constant MONTH_WINDOW = 30 days;
+    /// @dev 单用户单批欠费上限 5 WJ（防无限拉取）
+    uint256 public constant ARREARS_CAP = 5e18;
+    /// @dev 单次提醒费【启用时的建议初始价】0.05 WJ（v1 仍为 0 ⇒ 休眠）
     uint256 public constant DEFAULT_PER_USE_FEE = 0.05e18;
-    uint256 public constant DEFAULT_MONTHLY_FEE = 10e18;
-    uint256 public constant ARREARS_CAP = 5e18;           // 单用户欠费上限 5 WJ
+    /// @dev 【M2】owner 可下调的运营上限之绝对下限 0.01 WJ
+    uint256 public constant FEE_CAP_FLOOR = 0.01e18;
+
     uint256 public constant MAX_BATCH_USERS = 200;        // 单批上限，防 gas / 阻塞
     uint256 public constant REASON_MAX_LEN = 200;
 
     // ═══════════ 收入参数（三模块独立，禁止全局 feeRecipient）═══════════
-    /// @dev 仅 developer 可变；owner 只能设 feeCap 上限
+    /// @dev 仅 developer 可变
     address public serviceFeeRecipient;
-    /// @dev 【v1 休眠】perUseFee = 0 ⇒ 提醒服务不启用（settleBatch 逐笔 hit "zero amount" 跳过）。
+    /// @dev 单次提醒费率。可调区间 0 ~ PER_USE_FEE_CAP；【仅 developer】可调。
+    ///      【v1 休眠】= 0 ⇒ 提醒服务不启用（settleBatch 逐笔 hit "zero amount" 跳过）。
     ///      【J-53 裁定·2026-09-15】developer 填 J-53 本人地址；变更权仅其本人（自转让）。
-    uint256 public perUseFee = 0;                         // 即时型：每次读当前值（v1 = 0）
-    uint256 public monthlyFee = DEFAULT_MONTHLY_FEE;
-    bool    public monthlyEnabled = false;                // 【v1 默认不启用】
-    /// @dev owner 设定的费率上限（≥ FEE_CAP_FLOOR）
+    uint256 public perUseFee = 0;
+    /// @dev 【M2】owner 设定的运营上限（≥ FEE_CAP_FLOOR）；实际费率由 unitFee() 取最小
     uint256 public feeCap = 1e18;
 
     // ═══════════ 授权（模式③）═══════════
@@ -52,19 +74,23 @@ contract NotificationService is ReentrancyGuard, Ownable, DeveloperRole {
     // ═══════════ 对账台账 ═══════════
     mapping(address => uint256) public chargesOf;         // 历史累计【已收】
     mapping(address => uint256) public arrearsOf;         // 历史累计【欠费】
+    /// @dev 【A 包月制】当月累计【已收】（以 MONTH_WINDOW 分桶滚动）
+    mapping(address => uint256) public monthlyCharged;
+    /// @dev 【A 包月制】用户当前所属月份桶（= periodEnd / MONTH_WINDOW）
+    mapping(address => uint256) public monthlyAnchor;
     /// @dev 【M-D】每用户已结算到的周期末：要求 periodStart > lastSettledEnd[u]，防周期重放
     mapping(address => uint256) public lastSettledEnd;
 
     struct Batch {
         address user;
         uint256 count;        // 提醒条数（链下记账后提交）
-        uint256 amount;       // 实际金额（已封顶）
+        uint256 amount;       // 实际应扣金额（已封顶）
         uint256 collected;    // 实际收到
         uint256 periodStart;
         uint256 periodEnd;
         bytes32 detailHash;   // 链下记账明细 hash
         uint256 ts;
-        bool    capped;       // 是否触发欠费封顶
+        bool    capped;       // 是否触发封顶（单批欠费上限 / 当月额度上限）
     }
     Batch[] public batches;
     /// @dev 用户 → 该用户的 batchId 列表（对账）
@@ -77,10 +103,10 @@ contract NotificationService is ReentrancyGuard, Ownable, DeveloperRole {
     event BatchSettled(uint256 indexed batchId, address indexed user, uint256 count, uint256 amount, uint256 periodStart, uint256 periodEnd, uint256 ts);
     event ChargeSkipped(uint256 indexed batchId, address indexed user, uint256 amount, string reason, uint256 ts);
     event ArrearsCapped(address indexed user, uint256 arrears, uint256 ts);   // 【M-C】累计欠费达上限而跳过
+    /// @dev 【A 包月制】当月付满 MONTHLY_FEE_CAP ⇒ 继续提醒、不再扣费
+    event MonthlyCapReached(address indexed user, uint256 count, uint256 monthlyCharged, uint256 ts);
     event ServiceFeeRecipientChanged(address indexed oldAddr, address indexed newAddr, uint256 ts);
-    event PerUseFeeChanged(uint256 oldFee, uint256 newFee, uint256 ts);
-    event MonthlyFeeChanged(uint256 oldFee, uint256 newFee, uint256 ts);
-    event MonthlyEnabledChanged(bool enabled, uint256 ts);
+    event PerUseFeeUpdated(uint256 oldFee, uint256 newFee, uint256 ts);
     event FeeCapChanged(uint256 oldCap, uint256 newCap, uint256 ts);
 
     constructor(address owner_, address developer_, address serviceFeeRecipient_) {
@@ -142,8 +168,9 @@ contract NotificationService is ReentrancyGuard, Ownable, DeveloperRole {
      *      · 仅 developer 可调；
      *      · 逐笔 try/catch（低层 call 判 bool），【失败不整批回滚】，逐笔标记；
      *      · 未授权 / 已撤销 ⇒ 跳过并 emit ChargeSkipped（绝不强扣）；
-     *      · 单笔金额按 counts[i] × 当前费率 计算；超过 ARREARS_CAP(5 WJ) ⇒ 封顶；
-     *      · 明细 hash 上链，提供 getBatch / chargesOf / arrearsOf 对账。
+     *      · 单笔金额 = counts[i] × 当前费率，先封【单批欠费上限 5 WJ】，再封【当月剩余额度】；
+     *      · 【A 包月制】当月付满 30 WJ ⇒ 继续提醒、不再扣费（emit MonthlyCapReached）；
+     *      · 明细 hash 上链，提供 getBatch / chargesOf / arrearsOf / monthlyCharged 对账。
      */
     function settleBatch(
         uint256 periodStart,
@@ -183,21 +210,40 @@ contract NotificationService is ReentrancyGuard, Ownable, DeveloperRole {
             return;
         }
 
-        // ② 金额：即时读当前费率（不快照）
+        // ② 【A 包月制】跨月滚动 ⇒ 重置当月累计
+        uint256 m = ctx.periodEnd / MONTH_WINDOW;
+        if (monthlyAnchor[u] != m) {
+            monthlyAnchor[u] = m;
+            monthlyCharged[u] = 0;
+        }
+
+        // ③ 金额：即时读当前费率（不快照）
         uint256 amount = count * unitFee();
         bool capped = false;
+        //   先封【单批欠费上限 5 WJ】
         if (amount > ARREARS_CAP) { amount = ARREARS_CAP; capped = true; }
+
+        //   再封【当月剩余额度】——月费对单次费【真正起封顶作用】，非两套独立收费
+        uint256 mCharged = monthlyCharged[u];
+        if (mCharged >= MONTHLY_FEE_CAP) {
+            // 【A 包月制】当月已付满 30 WJ ⇒ 继续提醒、不再扣费（不限次数）
+            emit MonthlyCapReached(u, count, mCharged, block.timestamp);
+            return;
+        }
+        uint256 remaining = MONTHLY_FEE_CAP - mCharged;
+        if (amount > remaining) { amount = remaining; capped = true; }
+
         if (amount == 0) {
             emit ChargeSkipped(batches.length, u, 0, "zero amount", block.timestamp);
             return;
         }
 
-        // ③ 优先从预存余额抵扣，不足部分再按需拉取
+        // ④ 优先从预存余额抵扣，不足部分再按需拉取
         uint256 collected = balanceOf[u] >= amount ? amount : balanceOf[u];
         if (collected > 0) { balanceOf[u] -= collected; }
         uint256 toPull = amount - collected;
 
-        // ④ 逐笔 try（低层 call，不 revert 整批）
+        // ⑤ 逐笔 try（低层 call，不 revert 整批）
         if (toPull > 0) {
             // 【M-A】绕过 _wjSafeTransfer 的拉取点须内联同一道门槛，否则收款方为 0/WJ 时
             //        首次结算即烧 WJ、J 退本合约，永久损失
@@ -206,8 +252,9 @@ contract NotificationService is ReentrancyGuard, Ownable, DeveloperRole {
             if (ok) { collected += toPull; }
         }
 
-        // ⑤ 记账（成功部分计入已收，失败部分计入欠费）
+        // ⑥ 记账（成功部分计入已收与当月累计，失败部分计入欠费）
         chargesOf[u] += collected;
+        monthlyCharged[u] = mCharged + collected;
         if (collected < amount) { arrearsOf[u] += (amount - collected); }
 
         uint256 bid = batches.length;
@@ -225,10 +272,12 @@ contract NotificationService is ReentrancyGuard, Ownable, DeveloperRole {
         emit BatchSettled(bid, u, count, collected, ctx.periodStart, ctx.periodEnd, block.timestamp);
     }
 
-    /// @dev 当前单位费率（即时型，每次读当前值）；【M-B】读取时以 feeCap 钳制，owner 可随时下调
+    /// @dev 当前单位费率（即时型，每次读当前值）。
+    ///      取三者最小：perUseFee / feeCap（owner 可下调）/ PER_USE_FEE_CAP（常量硬上限）
     function unitFee() public view returns (uint256) {
-        uint256 f = monthlyEnabled ? monthlyFee : perUseFee;
-        if (f > feeCap) { f = feeCap; }     // 钳制：避免 owner 下调 feeCap 后造成死锁
+        uint256 f = perUseFee;
+        if (f > feeCap) { f = feeCap; }
+        if (f > PER_USE_FEE_CAP) { f = PER_USE_FEE_CAP; }
         return f;
     }
 
@@ -240,26 +289,15 @@ contract NotificationService is ReentrancyGuard, Ownable, DeveloperRole {
         serviceFeeRecipient = newAddr;
     }
 
+    /// @dev 单次提醒费调整【仅 developer】；须 ≤ 常量硬上限 PER_USE_FEE_CAP（1 WJ）
     function setPerUseFee(uint256 newFee) external onlyDeveloper {
-        require(newFee <= feeCap, "NS: above feeCap");
-        emit PerUseFeeChanged(perUseFee, newFee, block.timestamp);
+        require(newFee <= PER_USE_FEE_CAP, "NS: above per-use cap");
+        emit PerUseFeeUpdated(perUseFee, newFee, block.timestamp);
         perUseFee = newFee;
     }
 
-    function setMonthlyFee(uint256 newFee) external onlyDeveloper {
-        require(newFee <= feeCap, "NS: above feeCap");
-        emit MonthlyFeeChanged(monthlyFee, newFee, block.timestamp);
-        monthlyFee = newFee;
-    }
-
-    function setMonthlyEnabled(bool enabled) external onlyDeveloper {
-        emit MonthlyEnabledChanged(enabled, block.timestamp);
-        monthlyEnabled = enabled;
-    }
-
-    /// @dev feeCap 由 owner 设；硬下限 0.01 WJ（M2）。
-    ///      【M-B】已移除「不得低于当前费率」的限制：owner 可随时下调（超限部分由 unitFee() 钳制），
-    ///      不再死锁。建议下调走 Timelock；变更必须 emit。
+    /// @dev 【M2】owner 可下调运营上限（下限 FEE_CAP_FLOOR）；不影响常量硬上限。
+    ///      建议下调走 Timelock；变更必须 emit。
     function setFeeCap(uint256 newCap) external onlyOwner {
         require(newCap >= FEE_CAP_FLOOR, "NS: feeCap below floor");
         emit FeeCapChanged(feeCap, newCap, block.timestamp);

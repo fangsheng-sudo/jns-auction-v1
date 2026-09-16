@@ -194,15 +194,16 @@ contract TestDevPath is Base {
         require(notify.serviceFeeRecipient() == CAROL, "developer change failed");
     }
 
-    // ═══════════ ⑩ v1 休眠：perUseFee = 0、monthlyEnabled = false ═══════════
+    // ═══════════ ⑩ v1 休眠：perUseFee = 0（提醒服务未启用）═══════════
     function test_v1DormantDefaults() public {
         NotificationService n = new NotificationService(DAO, DEVELOPER_J53, DAO);
         require(n.developer() == DEVELOPER_J53, "developer must be J-53");
         require(n.perUseFee() == 0, "v1 perUseFee must be 0");
-        require(!n.monthlyEnabled(), "v1 monthly must be disabled");
         require(n.unitFee() == 0, "unitFee must be 0 while dormant");
+        require(n.PER_USE_FEE_CAP() == 1e18, "per-use cap must be 1 WJ");
+        require(n.MONTHLY_FEE_CAP() == 30e18, "monthly cap must be 30 WJ");
 
-        // 休眠下结算：金额为 0 ⇒ 逐笔跳过，不扣款
+        // 休眠下结算：金额为 0 ⇒ 逐笔跳过，不扣款，且不 revert
         address[] memory us = new address[](1);
         us[0] = ALICE;
         uint256[] memory cs = new uint256[](1);

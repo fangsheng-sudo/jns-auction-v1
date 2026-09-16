@@ -131,7 +131,7 @@ contract TestG is Base {
         require(notify.serviceFeeRecipient() == CAROL, "developer change failed");
     }
 
-    /// feeCap < 0.01 WJ → revert
+    /// @dev 【M2】owner 可下调的运营上限（下限 0.01 WJ）；不影响常量硬上限
     function testG8_feeCapBelowFloorReverts() public {
         vm.prank(DAO);
         vm.expectRevert(bytes("NS: feeCap below floor"));
@@ -158,6 +158,165 @@ contract TestG is Base {
         notify.withdrawBalance();
         require(wj.balanceOf(BOB) == before + 10e18, "withdraw failed");
         require(_trap() == 0, "trap");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  【J-53 裁定·2026-09-16】提醒费三档封顶（T1~T6）
+    // ═══════════════════════════════════════════════════════════
+
+    /// T1｜developer 在 0~1 WJ 内调价生效，且必须 emit PerUseFeeUpdated
+    function testT1_devCanAdjustWithinRangeAndEmits() public {
+        require(notify.perUseFee() == 0.05e18, "setUp baseline");
+        vm.recordLogs();
+        vm.prank(DEVEL);
+        notify.setPerUseFee(0.3e18);
+        require(notify.perUseFee() == 0.3e18, "fee not set");
+        require(notify.unitFee() == 0.3e18, "unitFee not applied");
+
+        Log[] memory logs = vm.getRecordedLogs();
+        require(logs.length == 1, "exactly one event");
+        require(
+            logs[0].topics[0] == keccak256("PerUseFeeUpdated(uint256,uint256,uint256)"),
+            "must emit PerUseFeeUpdated"
+        );
+        require(logs[0].emitter == address(notify), "emitter");
+    }
+
+    /// T2｜调至刚好 1 WJ 通过；> 1 WJ ⇒ revert
+    function testT2_boundaryOneWjPassesAboveReverts() public {
+        vm.prank(DEVEL);
+        notify.setPerUseFee(1e18);
+        require(notify.perUseFee() == 1e18, "exactly 1 WJ must pass");
+
+        vm.prank(DEVEL);
+        vm.expectRevert(bytes("NS: above per-use cap"));
+        notify.setPerUseFee(1e18 + 1);
+        require(notify.perUseFee() == 1e18, "must stay at 1 WJ");
+
+        // 远超上限同样被拒
+        vm.prank(DEVEL);
+        vm.expectRevert(bytes("NS: above per-use cap"));
+        notify.setPerUseFee(5e18);
+    }
+
+    /// T3｜非 developer（含 owner 多签 / 多签 / 普通用户）调价 ⇒ revert
+    function testT3_nonDeveloperCannotSetFee() public {
+        vm.prank(DAO);
+        vm.expectRevert(bytes("Not developer"));
+        notify.setPerUseFee(0.1e18);
+
+        vm.prank(MULTISIG);
+        vm.expectRevert(bytes("Not developer"));
+        notify.setPerUseFee(0.1e18);
+
+        vm.prank(ALICE);
+        vm.expectRevert(bytes("Not developer"));
+        notify.setPerUseFee(0.1e18);
+
+        require(notify.perUseFee() == 0.05e18, "must be unchanged");
+    }
+
+    /// T4｜两个 CAP 均为常量（无 setter，任何角色不可改）；owner 抬 feeCap 也破不了硬上限
+    function testT4_capsAreConstantsAndOwnerCannotExceed() public {
+        require(notify.PER_USE_FEE_CAP() == 1e18, "PER_USE_FEE_CAP must be 1 WJ");
+        require(notify.MONTHLY_FEE_CAP() == 30e18, "MONTHLY_FEE_CAP must be 30 WJ");
+
+        // developer 设到硬上限
+        vm.prank(DEVEL);
+        notify.setPerUseFee(1e18);
+        require(notify.unitFee() == 1e18, "at hard cap");
+
+        // owner 把可调上限抬到远超硬上限 ⇒ 实际费率仍被常量 1 WJ 钳制
+        vm.prank(DAO);
+        notify.setFeeCap(100e18);
+        require(notify.unitFee() == 1e18, "constant cap must hold");
+    }
+
+    /// T5｜月费封顶：累计付满 30 WJ 后【仍提醒、不再扣费】（A 包月制，非硬截断）
+    function testT5_monthlyCapStopsChargingButKeepsReminding() public {
+        vm.prank(DEVEL);
+        notify.setPerUseFee(1e18);
+        vm.prank(ALICE);
+        notify.authorizeForPulling();
+        vm.prank(ALICE);
+        wj.approve(address(notify), 1000e18);
+
+        // 6 批 × 5 WJ（单批上限 5 WJ）= 30 WJ
+        for (uint256 i = 0; i < 6; i++) {
+            uint256 s = 900_000 + i * 200;
+            vm.prank(DEVEL);
+            notify.settleBatch(s, s + 100, _users1(ALICE), _counts1(5), keccak256("m"));
+        }
+        require(notify.monthlyCharged(ALICE) == 30e18, "monthly must reach 30 WJ");
+        require(notify.chargesOf(ALICE) == 30e18, "charged 30 WJ");
+
+        // 第 7 批：已付满 ⇒ 不再扣费、不 revert（继续提醒），并 emit MonthlyCapReached
+        uint256 balBefore = wj.balanceOf(ALICE);
+        uint256 batchesBefore = notify.batchCount();
+        vm.recordLogs();
+        vm.prank(DEVEL);
+        notify.settleBatch(902_000, 902_100, _users1(ALICE), _counts1(50), keccak256("m2"));
+
+        require(wj.balanceOf(ALICE) == balBefore, "must NOT charge after monthly cap");
+        require(notify.chargesOf(ALICE) == 30e18, "charges must stay 30 WJ");
+        require(notify.batchCount() == batchesBefore, "no new charge batch");
+
+        Log[] memory logs = vm.getRecordedLogs();
+        bool found = false;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == keccak256("MonthlyCapReached(address,uint256,uint256,uint256)")) { found = true; }
+        }
+        require(found, "must emit MonthlyCapReached (still reminding)");
+        require(_trap() == 0, "trap");
+    }
+
+    /// T6｜v1 休眠（perUseFee = 0）：不扣费、不 revert
+    function testT6_v1DormantNoChargeNoRevert() public {
+        vm.prank(DEVEL);
+        notify.setPerUseFee(0);
+        require(notify.unitFee() == 0, "dormant");
+
+        vm.prank(BOB);
+        notify.authorizeForPulling();
+        vm.prank(BOB);
+        wj.approve(address(notify), 100e18);
+
+        uint256 before = wj.balanceOf(BOB);
+        vm.prank(DEVEL);
+        notify.settleBatch(PERIOD_START, PERIOD_END, _users1(BOB), _counts1(3), keccak256("d"));
+
+        require(wj.balanceOf(BOB) == before, "must not charge while dormant");
+        require(notify.chargesOf(BOB) == 0, "no charge recorded");
+        require(notify.batchCount() == 0, "no batch for zero amount");
+        require(_trap() == 0, "trap");
+    }
+
+    /// T7｜feeCap 初值 = 1 WJ（= 常量硬上限）⇒ developer 在 0~1 WJ 区间【日常自由调价】
+    ///     定位：feeCap 仅是多签【安全刹车】（极端下调），不阻碍 J-53 日常定价。
+    function testT7_feeCapInitialOneWjLeavesDeveloperFree() public {
+        // 初值即常量硬上限 ⇒ 不会架空 developer 独占调价权
+        require(notify.feeCap() == 1e18, "feeCap initial must be 1 WJ");
+        require(notify.feeCap() == notify.PER_USE_FEE_CAP(), "feeCap must equal hard cap at v1");
+
+        // 0.05 WJ：生效
+        vm.prank(DEVEL);
+        notify.setPerUseFee(0.05e18);
+        require(notify.unitFee() == 0.05e18, "0.05 WJ must be effective");
+
+        // 0.5 WJ：生效
+        vm.prank(DEVEL);
+        notify.setPerUseFee(0.5e18);
+        require(notify.unitFee() == 0.5e18, "0.5 WJ must be effective");
+
+        // 1 WJ（上限）：生效
+        vm.prank(DEVEL);
+        notify.setPerUseFee(1e18);
+        require(notify.unitFee() == 1e18, "1 WJ must be effective");
+
+        // 安全刹车确实存在：owner 下调 feeCap 会影响实际费率（极端场景才动）
+        vm.prank(DAO);
+        notify.setFeeCap(0.1e18);
+        require(notify.unitFee() == 0.1e18, "downward brake must bind");
     }
 }
 

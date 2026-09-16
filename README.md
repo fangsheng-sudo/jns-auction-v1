@@ -22,7 +22,7 @@
 
 ## 当前状态
 
-- **测试：13 suites / 133 passed / 0 failed**
+- **测试：13 suites / 140 passed / 0 failed**
 - **编译：solc 0.8.0 / istanbul / optimizer 200 ⇒ 0 warning / 0 error / 0 stack-too-deep**
 - **链：** chainId 3666（Jouleverse 主网）；须 `--evm-version istanbul`（PUSH0 不可用）
 - **计价：** 全系统 WJ，J 仅作 gas

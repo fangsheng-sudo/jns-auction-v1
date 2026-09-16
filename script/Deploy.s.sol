@@ -45,7 +45,7 @@ contract Deploy {
 
     /// @dev 【J-53 裁定·2026-09-15 已确认采用】提醒服务 developer = J-53 本人地址
     ///      （core-contributors.md L90；EOA 实测；≠ 多签 ⇒ 权限隔离成立）
-    ///      v1：perUseFee = 0、monthlyEnabled = false ⇒ 提醒服务休眠。
+    ///      v1：perUseFee = 0 ⇒ 提醒服务休眠（单次封顶 1 WJ / 月费封顶 30 WJ 均为常量）。
     ///      ⚠️ developer 变更权【仅其本人】（transferDeveloperRole 自转让）；owner 无法发起。
     address public constant DEVELOPER = 0x8b4846d72d1530df755D9B5146A3e627a0A7147F;
 

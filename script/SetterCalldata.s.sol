@@ -60,7 +60,7 @@ contract SetterCalldata {
             address(0),   // notify 地址（Deploy 输出）
             "setPerUseFee(uint256)",
             abi.encodeWithSignature("setPerUseFee(uint256)", 5e16),   // 0.05 WJ（将来启用时）
-            "PerUseFeeChanged(old, 5e16, ts)"
+            "PerUseFeeUpdated(old, 5e16, ts)"
         );
         emit DeveloperCall(
             address(0),   // notify 地址

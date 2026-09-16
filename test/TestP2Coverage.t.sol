@@ -113,19 +113,14 @@ contract TestP2Coverage is Base {
         notify.setPerUseFee(0.02e18);
         require(notify.unitFee() == 0.02e18, "per-use applied");
 
+        // 【J-53 裁定·2026-09-16】单次封顶 1 WJ（常量）
         vm.prank(DEVEL);
-        notify.setMonthlyFee(0.8e18);
-        require(notify.monthlyFee() == 0.8e18, "monthly set");
+        notify.setPerUseFee(1e18);
+        require(notify.unitFee() == 1e18, "1 WJ allowed");
 
         vm.prank(DEVEL);
-        notify.setMonthlyEnabled(true);
-        require(notify.monthlyEnabled(), "enabled");
-        require(notify.unitFee() == 0.8e18, "monthly takes precedence");
-
-        // developer 改费率不得超 feeCap
-        vm.prank(DEVEL);
-        vm.expectRevert(bytes("NS: above feeCap"));
-        notify.setPerUseFee(2e18);
+        vm.expectRevert(bytes("NS: above per-use cap"));
+        notify.setPerUseFee(1e18 + 1);
     }
 
     function testCov_ns_batchesOf() public {

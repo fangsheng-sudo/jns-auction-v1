@@ -133,4 +133,4 @@
 | solc 编译器 **Error** | **0** |
 | **Stack too deep** | **0** |
 | Foundry lint `note[...]` 风格建议 | 181 条（**非编译器 warning**，属 custom-errors / modifier-used-once 等建议，不影响正确性） |
-| 全量测试 | **133 passed / 0 failed**（13 suites）※2026-09-15 审计修复后（历史基线：117 → 现値 **133**） |
+| 全量测试 | **140 passed / 0 failed**（13 suites）※2026-09-15 审计修复后（历史基线：117 → 现値 **140**） |
