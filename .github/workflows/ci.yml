@@ -1,4 +1,4 @@
-5name: CI
+name: CI
 
 on:
   push:
@@ -18,12 +18,10 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Show forge version
-        run: |
-          forge --version
+        run: forge --version
 
       - name: Build
-        run: forge build --sizes --skip script --skip test
+        run: forge build
 
       - name: Test
-        run: |
-          forge test -vvv
+        run: forge test -vvv
