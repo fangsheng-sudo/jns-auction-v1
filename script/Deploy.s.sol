@@ -33,7 +33,7 @@ interface VmDeploy {
  * 运行（本地干跑，不广播、不发送交易）：
  *   forge script script/Deploy.s.sol:Deploy
  * 真部署（需人工二次确认）：
- *   DEPLOYER_ADDR=<持有私钥的EOA> forge script script/Deploy.s.sol:Deploy --broadcast --rpc-url https://rpc.jnsdao.com:8503
+ *   DEPLOYER_ADDR=<持有私钥的EOA> forge script script/Deploy.s.sol:Deploy --broadcast --rpc-url $JNS_DAO_RPC_URL
  *
  * ⚠️ 本链【无测试网】（chainId 3666），四批合约【均不可升级】⇒ 参数须事前逐项核对。
  */
