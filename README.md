@@ -1,3 +1,4 @@
+![CI](https://github.com/fangsheng-sudo/jns-auction-v1/actions/workflows/ci.yml/badge.svg)
 # JNS 域名链上自动拍卖系统
 
 > **提交 J-25 审查用**｜提交人：J-53（@fangsheng-sudo）
