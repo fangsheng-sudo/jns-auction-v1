@@ -30,6 +30,7 @@
 - **链：** chainId 3666（Jouleverse 主网）；须 `--evm-version istanbul`（PUSH0 不可用）
 - **计价：** 全系统 WJ，J 仅作 gas
 - **权限：** 五处 owner 均为 JNS DAO 多签 `0x4eF599b6E39D950D6Ddbd830fF5f95e06770C1B3`（2/3）
+- **部署者：** 仅承担 gas，**不获得任何权限**（owner 由 constructor 硬编码为多签，**不经 EOA 移交**）
 - **developer：** v1 休眠；变更权仅其本人（`transferDeveloperRole` 自转让 ⇒ 沉默 = 否决）
 
 ## 目录
