@@ -50,6 +50,7 @@ gas表.md           gas 实测（含口径更正说明）
 
 - Foundry（`forge`）；`solc 0.8.0`（`auto_detect_solc = false`）
 - 无测试网 ⇒ 仅本地 EVM 验证；JNS DAO 官方 RPC（授权端点，部署时配置）
+- 部署时通过 `--rpc-url` 指定 Jouleverse 主网 RPC（chainId **3666**）
 - 命令示例中的 `$JNS_DAO_RPC_URL` 为环境变量占位，部署时按授权端点填入
 
 ## 许可
