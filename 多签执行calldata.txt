@@ -14,7 +14,7 @@
       <NOTIFY_ADDR>     = NotificationService 部署地址
     已知常量：
       DAO 多签           = 0x4eF599b6E39D950D6Ddbd830fF5f95e06770C1B3
-      J-0（Koant）EOA    = 0x5BF50F2931688F886F46f88D5CEEDE530bB92076
+      J-0 EOA            = 0x5BF50F2931688F886F46f88D5CEEDE530bB92076
  4. ⚠️ 多签地址是【合约、无私钥】⇒ 绝不可作 broadcast 发送者；但本包是
     「传给多签去执行」的调用数据，调用者就是多签，正确。
  5. ⚠️ 下列多数 setter 的值【已在 constructor / 默认值内联】
