@@ -301,16 +301,28 @@ contract TestSupplement is Base {
         require(tid != 0, "not minted");
         require(jns.ownerOf(tid) == MULTISIG, "should be multisig-owned");
 
-        // ① claimTimeoutRefund 被拒（_nslookup != 0，此时仍在 Held）
+        // ① claimTimeoutRefund 被拒（治理方托管 ⇒ 应走 settleDelivery）【DvP·三分支②】
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: already minted, use releaseToDAO"));
+        vm.expectRevert(bytes("EA: held by governance, use settleDelivery"));
         EnglishAuction(a).claimTimeoutRefund();
 
-        // ② releaseToDAO 通过（ownerOf == JNS.owner()）
-        uint256 dao0 = wj.balanceOf(DAO);
+        // ② releaseToDAO 也拒（白名单已收窄为仅 winner，不得「先付款」）
+        vm.expectRevert(bytes("EA: minted to unexpected address"));
         EnglishAuction(a).releaseToDAO();
-        require(wj.balanceOf(DAO) == dao0 + 12e18, "release should pass and pay");
+        require(uint256(EnglishAuction(a).escrow()) == 1, "escrow must stay Held");
+
+        // ③ 改走原子交割：治理方 unbind + 授权，settleDelivery 一手交 NFT、一手付 WJ
+        vm.prank(MULTISIG);
+        jns.unbind(tid);
+        vm.prank(MULTISIG);
+        jns.setApprovalForAll(a, true);
+
+        uint256 dao0 = wj.balanceOf(DAO);
+        EnglishAuction(a).settleDelivery();
+        require(jns.ownerOf(tid) == BOB, "NFT must be delivered to winner");
+        require(wj.balanceOf(DAO) == dao0 + 12e18, "delivery should pay exactly highestBid");
         require(uint256(EnglishAuction(a).escrow()) == 2, "not Released");
+        require(_trap() == 0, "trap");
     }
 
     /// @dev 反向：settle 后【未铸造】时 releaseToDAO 必须 revert、超时退款须满足窗口
@@ -435,7 +447,7 @@ contract TestSupplement is Base {
         _claimTo(BOB, "x3safe");                 // 铸给赢家本人
         vm.warp(block.timestamp + 46 days);
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: already minted, use releaseToDAO"));
+        vm.expectRevert(bytes("EA: already minted to winner, use releaseToDAO"));
         EnglishAuction(a).claimTimeoutRefund();
     }
 }

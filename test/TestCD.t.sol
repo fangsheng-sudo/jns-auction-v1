@@ -69,13 +69,13 @@ contract TestC is Base {
         EnglishAuction(a).claimTimeoutRefund();
     }
 
-    /// 已铸造后再走超时退款 → revert（两出口互斥）
+    /// 已铸造且赢家持有 ⇒ 超时退款拒退（应走 releaseToDAO）【DvP 重写·三分支③】
     function testC6_refundAfterMintedReverts() public {
         address a = _settledAuction("c6", 10e18, 12e18);
-        _claimTo(BOB, "c6");                      // 已铸造
+        _claimTo(BOB, "c6");                      // 已铸造且归赢家
         vm.warp(block.timestamp + 46 days);
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: already minted, use releaseToDAO"));
+        vm.expectRevert(bytes("EA: already minted to winner, use releaseToDAO"));
         EnglishAuction(a).claimTimeoutRefund();
     }
 }
@@ -112,15 +112,29 @@ contract TestD is Base {
         require(_trap() == 0, "trap");
     }
 
-    /// 铸给多签（claim 后未转出的中间态）→ 通过
-    function testD3_releaseWhenMintedToMultisigPasses() public {
+    /// 【DvP·已改】铸给多签（治理方托管中间态）⇒ releaseToDAO 拒付，改走 settleDelivery 原子交割
+    function testD3_releaseWhenMintedToMultisigReverts() public {
         address a = _settledAuction("d3", 10e18, 12e18);
         vm.prank(MULTISIG);
-        jns.claim("d3");                    // 先铸给多签，中间态
+        jns.claim("d3");                    // 先铸给多签（= JNS.owner()），中间态
+
+        // 硬化：白名单已删 `|| JNS.owner()` 分支 ⇒ 托管态不得「先付款」
+        vm.expectRevert(bytes("EA: minted to unexpected address"));
+        EnglishAuction(a).releaseToDAO();
+        require(uint256(EnglishAuction(a).escrow()) == 1, "escrow must stay Held");
+
+        // 原子交割：治理方 unbind + 授权
+        uint256 tid = jns._nslookup("d3");
+        vm.prank(MULTISIG);
+        jns.unbind(tid);
+        vm.prank(MULTISIG);
+        jns.setApprovalForAll(a, true);
 
         uint256 daoBefore = wj.balanceOf(DAO);
-        EnglishAuction(a).releaseToDAO();
+        EnglishAuction(a).settleDelivery();
+        require(jns.ownerOf(tid) == BOB, "NFT must be delivered to winner");
         require(wj.balanceOf(DAO) == daoBefore + 12e18, "DAO payout wrong");
+        require(uint256(EnglishAuction(a).escrow()) == 2, "not Released");
         require(_trap() == 0, "trap");
     }
 

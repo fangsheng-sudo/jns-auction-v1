@@ -137,7 +137,7 @@ contract TestP0Fix is Base {
 
     // ═════════════ P1-2：WinnerOwnershipMismatch 反向断言 ═════════════
 
-    /// 正常（铸给赢家）⇒ 【不得】emit WinnerOwnershipMismatch
+    /// 正常（铸给赢家）⇒ 放款成功，且【不得】emit 已删除的 WinnerOwnershipMismatch
     function testP1_2_noMismatchEventWhenMintedToWinner() public {
         address a = _settledAuction("ev1", 10e18, 12e18);
         _claimTo(BOB, "ev1");                          // 铸给赢家 BOB
@@ -152,22 +152,34 @@ contract TestP0Fix is Base {
         }
     }
 
-    /// 异常（铸给多签中间态）⇒ 【应】emit WinnerOwnershipMismatch
+    /// 【DvP·已改】治理方托管中间态 ⇒ releaseToDAO 拒付；settleDelivery 原子交割并 emit DeliverySettled
     function testP1_2_mismatchEventWhenMintedToMultisig() public {
         address a = _settledAuction("ev2", 10e18, 12e18);
         vm.prank(MULTISIG);
         jns.claim("ev2");                              // 铸给多签（未转出）
 
-        vm.recordLogs();
+        // 硬化后：托管态 releaseToDAO 必 revert（White-list 已收窄为仅 winner）
+        vm.expectRevert(bytes("EA: minted to unexpected address"));
         EnglishAuction(a).releaseToDAO();
+
+        // 改走原子交割
+        uint256 tid = jns._nslookup("ev2");
+        vm.prank(MULTISIG);
+        jns.unbind(tid);
+        vm.prank(MULTISIG);
+        jns.setApprovalForAll(a, true);
+
+        vm.recordLogs();
+        EnglishAuction(a).settleDelivery();
         Log[] memory logs = vm.getRecordedLogs();
 
-        bytes32 mismatch = keccak256("WinnerOwnershipMismatch(string,uint256,address,address,uint256)");
+        bytes32 dsettled = keccak256("DeliverySettled(string,uint256,address,uint256,address,uint256)");
         bool found;
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == mismatch) { found = true; }
+            if (logs[i].topics[0] == dsettled) { found = true; }
         }
-        require(found, "should emit mismatch when owner != winner");
+        require(found, "should emit DeliverySettled on atomic delivery");
+        require(jns.ownerOf(tid) == BOB, "NFT must reach winner");
     }
 
     // ═════════════ P1-3：脏数据不砖化整批 ═════════════

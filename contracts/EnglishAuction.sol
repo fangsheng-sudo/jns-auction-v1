@@ -72,7 +72,10 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
     event ApplicantWonInDefault(string name, address indexed applicant, uint256 amount, uint256 ts);
     event MintRequested(string name, address indexed winner, bytes32 reviewRef, uint256 requestedAt);
     event WJReleasedToDAO(string name, uint256 tokenId, address indexed currentOwner, uint256 amount, address indexed beneficiary, uint256 ts);
-    event WinnerOwnershipMismatch(string name, uint256 tokenId, address indexed winner, address indexed currentOwner, uint256 ts);
+    /// @dev 【第四方案 DvP】治理方托管的 NFT 已原子交割给赢家，同时 escrow 资金已付给 beneficiary
+    event DeliverySettled(string name, uint256 tokenId, address indexed winner, uint256 amount, address indexed beneficiary, uint256 ts);
+    /// @dev 【DvP 逃生口】终态下误入本合约的 NFT 已退回治理方（JNS.owner()）
+    event NftReturnedToGovernance(string name, uint256 tokenId, address indexed governance, uint256 ts);
     event TimeoutRefunded(string name, address indexed winner, uint256 amount, uint256 ts);
     event EmergencyCancelled(string name, string reason, uint256 ts);
     event TimeoutWindowExtended(string name, uint256 oldWindow, uint256 newWindow, string reason, uint256 ts);
@@ -233,12 +236,13 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
      * @dev 【J-53 裁定】去权限化：任何人可触发，但收款地址 = 创建时快照的 beneficiary，调用者无法指定。
      *      前置 = 链上可验证的铸造事实：JNS._nslookup(name) != 0。
      *      实测：不存在的 name 返回 0（不 revert）⇒ 无需 try/catch。
-     *      与 claimTimeoutRefund 通过 EscrowState 互斥。
+     *      与 claimTimeoutRefund / settleDelivery 通过 EscrowState 互斥。
      *
-     *      【白名单软校验】curOwner 必须 ∈ {winner, JNS.owner()}：
-     *        · 铸给 winner            → 通过（正常）
-     *        · 铸给多签（claim 后未转出的中间态，claim 为 _safeMint(_msgSender())）→ 通过
-     *        · 铸给无关第三方          → revert（资金停 Held，等治理纠正；避免「铸错人还照付钱」）
+     *      【第四方案 DvP·硬化】白名单收窄为【仅 win​ner】：
+     *        · 铸给 winner                 → 通过（放款）
+     *        · 铸给治理方（多签托管中间态）  → revert ⇒ 改走 settleDelivery()（原子交割）
+     *        · 铸给无关第三方               → revert（资金停 Held，等治理纠正）
+     *      ⇒ 删去原 `|| curOwner == JNS.owner()` 分支：托管态不再「先付款」。
      */
     function releaseToDAO() external nonReentrant {
         require(escrow == EscrowState.Held, "EA: not in escrow");
@@ -246,22 +250,68 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
         require(tokenId != 0, "EA: name not minted yet");   // 链上铸造事实
 
         address curOwner = IJNS(JNS_ADDRESS).ownerOf(tokenId);
-        require(
-            curOwner == highestBidder || curOwner == IJNS(JNS_ADDRESS).owner(),
-            "EA: minted to unexpected address"
-        );
+        require(curOwner == highestBidder, "EA: minted to unexpected address");
 
         uint256 amount = highestBid;
         escrow = EscrowState.Released;
 
-        // 【P1-2】仅当实际不匹配（铸给多签中间态）时才 emit；正常铸给赢家不得误报
-        if (curOwner != highestBidder) {
-            emit WinnerOwnershipMismatch(name_, tokenId, highestBidder, curOwner, block.timestamp);
-        }
-
         _wjSafeTransfer(beneficiary, amount);   // 【WJ2】结算出口（收款方固定）
         emit WJReleasedToDAO(name_, tokenId, curOwner, amount, beneficiary, block.timestamp);
         // 注：已放款 ⇒ 域名已铸造，占用【不得】释放（已铸名不可再申请），故此处不调 _notifyReleaseName
+    }
+
+    // ═══════════ 出口①b：DvP 原子交割（任何人可调）═══════════
+    /**
+     * @dev 【第四方案 DvP】把「治理方托管的 NFT」原子交割给赢家，并同时把 escrow 资金付给 beneficiary。
+     *
+     *  适用态：escrow == Held 且 JNS.ownerOf(tokenId) == JNS.owner()（多签 claim 后未转出的中间态）。
+     *  前置（链外）：治理方须已对本合约授权代转该 NFT（approve 或 setApprovalForAll）。
+     *              未授权 ⇒ NFT 转移 revert ⇒ 整笔原子回滚（escrow 不落终态）。
+     *
+     *  【CEI】严格顺序：① 置 escrow = Released → ② 转 NFT（治理方 → 赢家）→ ③ 转 WJ（→ beneficiary）。
+     *  硬约束：NFT 一律用 transferFrom（不用 safeTransferFrom）；WJ 一律经 _wjSafeTransfer。
+     *  无权限：任何人可调，不得加 onlyOwner。
+     */
+    function settleDelivery() external nonReentrant {
+        require(escrow == EscrowState.Held, "EA: not in escrow");
+        uint256 tokenId = IJNS(JNS_ADDRESS)._nslookup(name_);
+        require(tokenId != 0, "EA: name not minted yet");
+
+        address gov = IJNS(JNS_ADDRESS).owner();
+        require(IJNS(JNS_ADDRESS).ownerOf(tokenId) == gov, "EA: NFT not held by governance");
+
+        address winner = highestBidder;
+        uint256 amount = highestBid;
+
+        // ① CEI：先置终态（与 Refunded 互斥）
+        escrow = EscrowState.Released;
+        // ② 交割 NFT：治理方 → 赢家
+        IERC721(JNS_ADDRESS).transferFrom(gov, winner, tokenId);
+        // ③ 支付 WJ：→ 创建时快照的 beneficiary
+        _wjSafeTransfer(beneficiary, amount);
+
+        emit DeliverySettled(name_, tokenId, winner, amount, beneficiary, block.timestamp);
+    }
+
+    // ═══════════ 出口③：NFT 误入逃生口（任何人可调）═══════════
+    /**
+     * @dev 【第四方案 DvP】退款/放款终态后，若 NFT 被误转入本合约，任何人可将其退回治理方。
+     *      条件严格：① escrow 已进终态（Released / Refunded）；
+     *                ② 已铸造且本合约即为 tokenId 的当前持有人。
+     *      无权限：任何人可调；NFT 一律用 transferFrom。
+     */
+    function returnNftToGovernance() external nonReentrant {
+        require(
+            escrow == EscrowState.Released || escrow == EscrowState.Refunded,
+            "EA: not terminal"
+        );
+        uint256 tokenId = IJNS(JNS_ADDRESS)._nslookup(name_);
+        require(tokenId != 0, "EA: name not minted yet");
+        require(IJNS(JNS_ADDRESS).ownerOf(tokenId) == address(this), "EA: contract does not hold NFT");
+
+        address gov = IJNS(JNS_ADDRESS).owner();
+        IERC721(JNS_ADDRESS).transferFrom(address(this), gov, tokenId);
+        emit NftReturnedToGovernance(name_, tokenId, gov, block.timestamp);
     }
 
     // ═══════════ 出口②：超时退款（仅赢家本人）═══════════
@@ -272,10 +322,11 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
      *        另一场的 releaseToDAO 会因白名单校验恒 revert；而旧逻辑又要求
      *        「未铸造」才能退款 ⇒ 该场资金【无任何出口、永久锁死】。
      *
-     *  新判据（三支）：
-     *    ① tokenId == 0（未铸造）                       → 放行退款
-     *    ② 已铸造且 curOwner ∈ {highestBidder, JNS.owner()} → revert（走 releaseToDAO，正常路径）
-     *    ③ 已铸造且 curOwner 为无关第三方                 → 放行退款（releaseToDAO 必 revert，故需安全阀）
+     *  【第四方案 DvP·重写】判据改为三分支（每支对应唯一正解）：
+     *    ① tokenId == 0（未铸造）                        → 放行退款
+     *    ② 已铸造且 curOwner == JNS.owner()（治理方托管） → revert（改走 settleDelivery 原子交割）
+     *    ③ 已铸造且 curOwner == highestBidder（赢家持有） → revert（改走 releaseToDAO 放款）
+     *    ④ 已铸造且 curOwner 为无关第三方                 → 放行退款（续期安全阀）
      */
     function claimTimeoutRefund() external nonReentrant {
         require(escrow == EscrowState.Held, "EA: not in escrow");
@@ -284,11 +335,11 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
         uint256 tokenId = IJNS(JNS_ADDRESS)._nslookup(name_);
         if (tokenId != 0) {
             address cur = IJNS(JNS_ADDRESS).ownerOf(tokenId);
-            // 仅当 releaseToDAO 必定 revert 时放行退款
-            require(
-                cur != highestBidder && cur != IJNS(JNS_ADDRESS).owner(),
-                "EA: already minted, use releaseToDAO"
-            );
+            // ② 治理方托管 ⇒ 拒退（应走 settleDelivery）
+            require(cur != IJNS(JNS_ADDRESS).owner(), "EA: held by governance, use settleDelivery");
+            // ③ 赢家持有 ⇒ 拒退（应走 releaseToDAO）
+            require(cur != highestBidder, "EA: already minted to winner, use releaseToDAO");
+            // ④ 其余（无关第三方）⇒ 落到下方放行
         }
         require(block.timestamp >= requestedAt + timeoutWindow, "EA: timeout window not reached");
 
