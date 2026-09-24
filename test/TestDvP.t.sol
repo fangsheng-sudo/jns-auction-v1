@@ -188,6 +188,25 @@ contract TestDvP_R is Base {
         require(uint256(EnglishAuction(a).escrow()) == 3, "R6: Refunded");
         require(_trap() == 0, "trap");
     }
+
+    /// R7｜行6 残余双花（已知风险，非缺陷）：赢家先持有 NFT 再转卖第三方 ⇒ 超时退款放行（第三方分支）
+    function testR7_refundAfterWinnerResoldPasses() public {
+        address a = _settledAuction("r7", 10e18, 12e18);
+        uint256 tid = _claimTo(BOB, "r7");            // 铸给赢家
+        vm.prank(BOB);
+        jns.unbind(tid);                              // 解绑
+        vm.prank(BOB);
+        jns.transferFrom(BOB, CAROL, tid);            // 赢家转卖给第三方
+        require(jns.ownerOf(tid) == CAROL, "R7 pre: third party holds");
+
+        vm.warp(block.timestamp + 46 days);
+        uint256 b0 = wj.balanceOf(BOB);
+        vm.prank(BOB);
+        EnglishAuction(a).claimTimeoutRefund();       // 第三方分支 ⇒ 放行退款
+        require(wj.balanceOf(BOB) == b0 + 12e18, "R7: refund after resell");
+        require(uint256(EnglishAuction(a).escrow()) == 3, "R7: Refunded");
+        require(_trap() == 0, "trap");
+    }
 }
 
 contract TestDvP_E is Base {
@@ -244,5 +263,46 @@ contract TestDvP_E is Base {
         EnglishAuction(b).releaseToDAO();
         vm.expectRevert(bytes("EA: no NFT held"));
         EnglishAuction(b).returnNftToGovernance();
+    }
+}
+
+contract TestDvP_Deployer is Base {
+
+    /// D1｜漏调 setFactory ⇒ 工厂创建拍卖 revert（不得静默返回零地址）
+    function testD1_missingSetFactoryReverts() public {
+        EnglishAuctionDeployer dep = new EnglishAuctionDeployer();
+        JNSAuctionFactory fac = new JNSAuctionFactory(DAO, DAO, address(dep));
+        // 故意不调 dep.setFactory(address(fac))
+
+        vm.prank(ALICE);
+        uint256 rid = fac.submitRequest("d1", 10e18, keccak256(bytes("d1")));
+        vm.prank(DAO);
+        fac.setReviewer(DAO, true);
+        vm.prank(DAO);
+        fac.approveRequest(rid);
+        vm.prank(ALICE);
+        wj.approve(address(fac), 10e18);
+        vm.prank(ALICE);
+        vm.expectRevert(bytes("DEP: not factory"));
+        fac.createAuctionFromRequest(rid, 168);
+    }
+
+    /// D2｜setFactory 二次调用 ⇒ revert（一次性语义）
+    function testD2_setFactoryTwiceReverts() public {
+        EnglishAuctionDeployer dep = new EnglishAuctionDeployer();
+        dep.setFactory(address(0xBEEF));
+        vm.expectRevert(bytes("DEP: already set"));
+        dep.setFactory(address(0xCAFE));
+    }
+
+    /// D3｜deploy() onlyFactory：非 factory 调用被拒
+    function testD3_deployOnlyFactoryRejectsNonFactory() public {
+        EnglishAuctionDeployer dep = new EnglishAuctionDeployer();
+        JNSAuctionFactory fac = new JNSAuctionFactory(DAO, DAO, address(dep));
+        dep.setFactory(address(fac));
+
+        vm.prank(BOB);
+        vm.expectRevert(bytes("DEP: not factory"));
+        dep.deploy("d3", 168, 10e18, ALICE, DAO, bytes32(0), address(this));
     }
 }
