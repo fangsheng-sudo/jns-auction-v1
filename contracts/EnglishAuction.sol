@@ -323,11 +323,12 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
      *        另一场的 releaseToDAO 会因白名单校验恒 revert；而旧逻辑又要求
      *        「未铸造」才能退款 ⇒ 该场资金【无任何出口、永久锁死】。
      *
-     *  【第四方案 DvP·重写】判据改为三分支（每支对应唯一正解）：
+     *  【第四方案 DvP·重写】判据改为两分支（每支对应唯一正解）：
      *    ① tokenId == 0（未铸造）                        → 放行退款
-     *    ② 已铸造且 curOwner == address(this)（NFT 误入本合约） → revert（改走 settleDelivery 等交割出口）
-     *    ③ 已铸造且 curOwner == highestBidder（赢家持有） → revert（改走 releaseToDAO 放款）
-     *    ④ 其余（含治理方托管即压在多签、无关第三方）     → 放行退款（续期安全阀，R9-b 封死）
+     *    ② 已铸造且 curOwner == highestBidder（赢家持有） → revert（改走 releaseToDAO 放款）
+     *    ③ 其余（含治理方托管即压在多签、无关第三方、NFT 误入本合约） → 放行退款（续期安全阀，R9-b 封死）
+     *
+     *  注：NFT 误入本合约（cur == address(this)）也放行退款，退款后由 returnNftToGovernance 取回。
      */
     function claimTimeoutRefund() external nonReentrant {
         require(escrow == EscrowState.Held, "EA: not in escrow");
@@ -336,11 +337,9 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
         uint256 tokenId = IJNS(JNS_ADDRESS)._nslookup(name_);
         if (tokenId != 0) {
             address cur = IJNS(JNS_ADDRESS).ownerOf(tokenId);
-            // ② NFT 误入本合约 ⇒ 拒退（应走 settleDelivery 等交割出口）
-            require(cur != address(this), "EA: use settleDelivery");
-            // ③ 赢家持有 ⇒ 拒退（已交付，应走 releaseToDAO）
+            // 赢家持有 ⇒ 拒退（已交付，应走 releaseToDAO 放款）
             require(cur != highestBidder, "EA: use releaseToDAO");
-            // ④ 其余（含治理方托管即压在多签、无关第三方）⇒ 落到下方放行退款
+            // 其余（含治理方托管即压在多签、无关第三方、NFT 误入本合约）⇒ 落到下方放行退款
         }
         require(block.timestamp >= requestedAt + timeoutWindow, "EA: timeout window not reached");
 

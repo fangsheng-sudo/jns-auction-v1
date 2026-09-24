@@ -211,8 +211,8 @@ contract TestDvP_R is Base {
         require(_trap() == 0, "trap");
     }
 
-    /// R8｜退款分支② NFT 误入本合约（cur == address(this)）⇒ 拒退（去 settleDelivery / returnNft）
-    function testR8_refundWhenNftInContractReverts() public {
+    /// R8｜NFT 误入本合约（cur == address(this)）⇒ 放行退款 + returnNftToGovernance 可取回（端到端）
+    function testR8_refundWhenNftInContractThenReturn() public {
         address a = _settledAuction("r8", 10e18, 12e18);
         uint256 tid = _claimTo(MULTISIG, "r8");        // 铸给多签
         vm.prank(MULTISIG);
@@ -222,9 +222,37 @@ contract TestDvP_R is Base {
         require(jns.ownerOf(tid) == a, "R8 pre: NFT in contract");
 
         vm.warp(block.timestamp + 46 days);
+        uint256 b0 = wj.balanceOf(BOB);
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: use settleDelivery"));
-        EnglishAuction(a).claimTimeoutRefund();
+        EnglishAuction(a).claimTimeoutRefund();        // 放行退款（不再因 NFT 误入而拒退）
+        require(wj.balanceOf(BOB) == b0 + 12e18, "R8: winner refunded");
+        require(uint256(EnglishAuction(a).escrow()) == 3, "R8: Refunded");
+
+        EnglishAuction(a).returnNftToGovernance();      // 终态下取回误入 NFT
+        require(jns.ownerOf(tid) == MULTISIG, "R8: NFT returned to governance");
+        require(_trap() == 0, "trap");
+    }
+
+    /// R9｜无新双花：退款成功后 settleDelivery / releaseToDAO 均因 escrow 终态互斥而 revert
+    function testR9_noDoubleSpendAfterRefund() public {
+        address a = _settledAuction("r9", 10e18, 12e18);
+        vm.prank(MULTISIG);
+        uint256 tid = jns.claim("r9");                 // 铸给多签（治理方托管）
+        vm.prank(MULTISIG);
+        jns.unbind(tid);
+        vm.prank(MULTISIG);
+        jns.setApprovalForAll(a, true);
+
+        vm.warp(block.timestamp + 46 days);
+        vm.prank(BOB);
+        EnglishAuction(a).claimTimeoutRefund();        // 先退款 → Refunded
+        require(uint256(EnglishAuction(a).escrow()) == 3, "R9 pre: Refunded");
+
+        vm.expectRevert(bytes("EA: not in escrow"));
+        EnglishAuction(a).settleDelivery();
+        vm.expectRevert(bytes("EA: not in escrow"));
+        EnglishAuction(a).releaseToDAO();
+        require(_trap() == 0, "trap");
     }
 }
 
