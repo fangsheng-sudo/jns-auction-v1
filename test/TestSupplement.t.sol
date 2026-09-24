@@ -301,9 +301,9 @@ contract TestSupplement is Base {
         require(tid != 0, "not minted");
         require(jns.ownerOf(tid) == MULTISIG, "should be multisig-owned");
 
-        // ① claimTimeoutRefund 被拒（治理方托管 ⇒ 应走 settleDelivery）【DvP·三分支②】
+        // ① claimTimeoutRefund 未超时 ⇒ 因窗口未到拒退（治理方托管不再单独拒退；超时后放行退款，见 TestDvP R4）
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: use settleDelivery"));
+        vm.expectRevert(bytes("EA: timeout window not reached"));
         EnglishAuction(a).claimTimeoutRefund();
 
         // ② releaseToDAO 也拒（白名单已收窄为仅 winner，不得「先付款」）

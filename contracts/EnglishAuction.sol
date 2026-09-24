@@ -11,7 +11,8 @@ import "./deps/Deps.sol";
  *  起拍价 = 申请人首次出价（无流拍）；取消独立 reservePrice
  *  整数规则：≥1 WJ 且 %1e18==0；最小加价 = ceil(最高价×5%) 取整到整 WJ，下限 1 WJ
  *  168h；末 10 分钟出价 → +10min；总时长上限 192h；block.timestamp
- *  settle 后资金暂存本合约；任何人可 releaseToDAO；赢家 45 天可 claimTimeoutRefund
+ *  settle 后资金暂存本合约（escrow=Held）；任何人可 releaseToDAO / settleDelivery；赢家 45 天可 claimTimeoutRefund
+ *  终态互斥：Held → Released（放款）| Refunded（退款）；NFT 误入可 returnNftToGovernance
  *  编译 --evm-version istanbul
  */
 contract EnglishAuction is ReentrancyGuard, Ownable {
@@ -324,9 +325,9 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
      *
      *  【第四方案 DvP·重写】判据改为三分支（每支对应唯一正解）：
      *    ① tokenId == 0（未铸造）                        → 放行退款
-     *    ② 已铸造且 curOwner == JNS.owner()（治理方托管） → revert（改走 settleDelivery 原子交割）
+     *    ② 已铸造且 curOwner == address(this)（NFT 误入本合约） → revert（改走 settleDelivery 等交割出口）
      *    ③ 已铸造且 curOwner == highestBidder（赢家持有） → revert（改走 releaseToDAO 放款）
-     *    ④ 已铸造且 curOwner 为无关第三方                 → 放行退款（续期安全阀）
+     *    ④ 其余（含治理方托管即压在多签、无关第三方）     → 放行退款（续期安全阀，R9-b 封死）
      */
     function claimTimeoutRefund() external nonReentrant {
         require(escrow == EscrowState.Held, "EA: not in escrow");
@@ -335,11 +336,11 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
         uint256 tokenId = IJNS(JNS_ADDRESS)._nslookup(name_);
         if (tokenId != 0) {
             address cur = IJNS(JNS_ADDRESS).ownerOf(tokenId);
-            // ② 治理方托管 ⇒ 拒退（应走 settleDelivery）
-            require(cur != IJNS(JNS_ADDRESS).owner(), "EA: use settleDelivery");
-            // ③ 赢家持有 ⇒ 拒退（应走 releaseToDAO）
+            // ② NFT 误入本合约 ⇒ 拒退（应走 settleDelivery 等交割出口）
+            require(cur != address(this), "EA: use settleDelivery");
+            // ③ 赢家持有 ⇒ 拒退（已交付，应走 releaseToDAO）
             require(cur != highestBidder, "EA: use releaseToDAO");
-            // ④ 其余（无关第三方）⇒ 落到下方放行
+            // ④ 其余（含治理方托管即压在多签、无关第三方）⇒ 落到下方放行退款
         }
         require(block.timestamp >= requestedAt + timeoutWindow, "EA: timeout window not reached");
 

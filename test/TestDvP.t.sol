@@ -155,15 +155,18 @@ contract TestDvP_R is Base {
         require(_trap() == 0, "trap");
     }
 
-    /// R4｜退款分支② 治理方托管（NFT 在多签/治理方手中，非赢家持有）⇒ 拒退（应走 settleDelivery）
-    function testR4_refundWhenGovernanceHoldsReverts() public {
+    /// R4｜退款分支④ 治理方托管（NFT 压在多签，多签不转）⇒ 超时放行退款（R9-b 封死）
+    function testR4_refundWhenGovernanceHoldsPasses() public {
         address a = _settledAuction("r4", 10e18, 12e18);
         vm.prank(MULTISIG);
-        jns.claim("r4");
+        jns.claim("r4");                              // 铸给多签，多签一直不转
         vm.warp(block.timestamp + 46 days);
+        uint256 b0 = wj.balanceOf(BOB);
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: use settleDelivery"));
-        EnglishAuction(a).claimTimeoutRefund();
+        EnglishAuction(a).claimTimeoutRefund();       // 放行退款
+        require(wj.balanceOf(BOB) == b0 + 12e18, "R4: refund");
+        require(uint256(EnglishAuction(a).escrow()) == 3, "R4: Refunded");
+        require(_trap() == 0, "trap");
     }
 
     /// R5｜退款分支③ 赢家持有（= NFT 已铸给赢家且未转卖，此为「赢家持有」分支）⇒ 拒退（应走 releaseToDAO）
@@ -206,6 +209,22 @@ contract TestDvP_R is Base {
         require(wj.balanceOf(BOB) == b0 + 12e18, "R7: refund after resell");
         require(uint256(EnglishAuction(a).escrow()) == 3, "R7: Refunded");
         require(_trap() == 0, "trap");
+    }
+
+    /// R8｜退款分支② NFT 误入本合约（cur == address(this)）⇒ 拒退（去 settleDelivery / returnNft）
+    function testR8_refundWhenNftInContractReverts() public {
+        address a = _settledAuction("r8", 10e18, 12e18);
+        uint256 tid = _claimTo(MULTISIG, "r8");        // 铸给多签
+        vm.prank(MULTISIG);
+        jns.unbind(tid);
+        vm.prank(MULTISIG);
+        jns.transferFrom(MULTISIG, a, tid);            // 误转入拍卖合约
+        require(jns.ownerOf(tid) == a, "R8 pre: NFT in contract");
+
+        vm.warp(block.timestamp + 46 days);
+        vm.prank(BOB);
+        vm.expectRevert(bytes("EA: use settleDelivery"));
+        EnglishAuction(a).claimTimeoutRefund();
     }
 }
 
