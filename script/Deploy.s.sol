@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.0;
 
+import "../contracts/EnglishAuctionDeployer.sol";
 import "../contracts/JNSAuctionFactory.sol";
 import "../contracts/SecondaryMarket.sol";
 import "../contracts/ClaimRegistry.sol";
@@ -64,7 +65,9 @@ contract Deploy {
 
         vm.startBroadcast(deployer);
 
-        JNSAuctionFactory factory = new JNSAuctionFactory(owner, beneficiary);
+        EnglishAuctionDeployer auctionDeployer = new EnglishAuctionDeployer();
+        JNSAuctionFactory factory = new JNSAuctionFactory(owner, beneficiary, address(auctionDeployer));
+        auctionDeployer.setFactory(address(factory));
         emit Deployed("JNSAuctionFactory", address(factory));
 
         SecondaryMarket market = new SecondaryMarket(owner, tradeFeeTo);

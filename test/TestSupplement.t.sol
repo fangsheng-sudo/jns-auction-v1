@@ -303,11 +303,11 @@ contract TestSupplement is Base {
 
         // ① claimTimeoutRefund 被拒（治理方托管 ⇒ 应走 settleDelivery）【DvP·三分支②】
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: held by governance, use settleDelivery"));
+        vm.expectRevert(bytes("EA: use settleDelivery"));
         EnglishAuction(a).claimTimeoutRefund();
 
         // ② releaseToDAO 也拒（白名单已收窄为仅 winner，不得「先付款」）
-        vm.expectRevert(bytes("EA: minted to unexpected address"));
+        vm.expectRevert(bytes("EA: unexpected owner"));
         EnglishAuction(a).releaseToDAO();
         require(uint256(EnglishAuction(a).escrow()) == 1, "escrow must stay Held");
 
@@ -328,7 +328,7 @@ contract TestSupplement is Base {
     /// @dev 反向：settle 后【未铸造】时 releaseToDAO 必须 revert、超时退款须满足窗口
     function testS6_releaseBeforeMintReverts() public {
         address a = _settledAuction("mid2", 10e18, 12e18);
-        vm.expectRevert(bytes("EA: name not minted yet"));
+        vm.expectRevert(bytes("EA: not minted"));
         EnglishAuction(a).releaseToDAO();
 
         // 窗口未到 → 退款 revert
@@ -428,7 +428,7 @@ contract TestSupplement is Base {
         require(wj.balanceOf(DAO) == dao0 + 12e18, "a1 release failed");
 
         // a2：releaseToDAO 必 revert（铸给了无关第三方 CAROL，BOB != CAROL、CAROL != JNS.owner）
-        vm.expectRevert(bytes("EA: minted to unexpected address"));
+        vm.expectRevert(bytes("EA: unexpected owner"));
         a2.releaseToDAO();
 
         // a2：45 天后安全阀放行退款（旧逻辑此处会永久锁死）
@@ -447,7 +447,7 @@ contract TestSupplement is Base {
         _claimTo(BOB, "x3safe");                 // 铸给赢家本人
         vm.warp(block.timestamp + 46 days);
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: already minted to winner, use releaseToDAO"));
+        vm.expectRevert(bytes("EA: use releaseToDAO"));
         EnglishAuction(a).claimTimeoutRefund();
     }
 }

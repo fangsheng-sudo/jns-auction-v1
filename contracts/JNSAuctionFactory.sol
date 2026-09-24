@@ -3,6 +3,7 @@ pragma solidity 0.8.0;
 
 import "./deps/Deps.sol";
 import "./EnglishAuction.sol";
+import "./EnglishAuctionDeployer.sol";
 
 /**
  * @title  JNSAuctionFactory —— JNS 一级拍卖工厂（含链上审核留痕）
@@ -67,6 +68,9 @@ contract JNSAuctionFactory is Ownable {
     /// @dev 一级收入归属；【快照】在 createAuctionFromRequest 时写入拍卖实例
     address public auctionBeneficiary;
 
+    /// @dev 拍卖实例部署器；创建码从本工厂剥离，构造时注入（immutable）
+    address public immutable deployer;
+
     address[] public auctions;
     mapping(address => bool) public isAuction;
     /// @dev 已创建批次计数（每批 BATCH_SIZE 个）
@@ -90,9 +94,11 @@ contract JNSAuctionFactory is Ownable {
     /// @dev 【P0-1】工厂代实例转发 owner-only 调用（链上留痕）
     event AuctionOwnerCallForwarded(address indexed auction, string fn, uint256 ts);
 
-    constructor(address owner_, address auctionBeneficiary_) {
+    constructor(address owner_, address auctionBeneficiary_, address deployer_) {
         require(auctionBeneficiary_ != address(0) && auctionBeneficiary_ != WJ_ADDRESS, "FAC: bad beneficiary");
+        require(deployer_ != address(0), "FAC: zero deployer");
         auctionBeneficiary = auctionBeneficiary_;
+        deployer = deployer_;
         _transferOwnership(owner_);
     }
 
@@ -216,7 +222,7 @@ contract JNSAuctionFactory is Ownable {
 
         uint256 hours_ = durationHours == 0 ? DEFAULT_DURATION_HOURS : durationHours;
 
-        EnglishAuction ea = new EnglishAuction(
+        auction = IAuctionDeployer(deployer).deploy(
             r.name,
             hours_,
             r.startingPrice,
@@ -225,7 +231,6 @@ contract JNSAuctionFactory is Ownable {
             r.payloadHash,
             address(this)           // owner = 工厂（日常治理经工厂转发）
         );
-        auction = address(ea);
 
         // 【同 tx 拉取起拍价】applicant → 拍卖实例；只发生 1 次 transfer，工厂不持有资金
         SafeERC20.safeTransferFrom(IERC20(WJ_ADDRESS), r.applicant, auction, r.startingPrice);

@@ -90,7 +90,7 @@ contract TestDvP_T is Base {
     /// T4｜未铸造（tokenId == 0）⇒ 拒
     function testT4_settleDeliveryBeforeMintReverts() public {
         address a = _settledAuction("t4", 10e18, 12e18);
-        vm.expectRevert(bytes("EA: name not minted yet"));
+        vm.expectRevert(bytes("EA: not minted"));
         EnglishAuction(a).settleDelivery();
     }
 
@@ -98,7 +98,7 @@ contract TestDvP_T is Base {
     function testT5_settleDeliveryWhenThirdPartyHoldsReverts() public {
         address a = _settledAuction("t5", 10e18, 12e18);
         _claimTo(CAROL, "t5");
-        vm.expectRevert(bytes("EA: NFT not held by governance"));
+        vm.expectRevert(bytes("EA: not gov-held"));
         EnglishAuction(a).settleDelivery();
     }
 
@@ -138,7 +138,7 @@ contract TestDvP_R is Base {
         address a = _settledAuction("r2", 10e18, 12e18);
         vm.prank(MULTISIG);
         jns.claim("r2");
-        vm.expectRevert(bytes("EA: minted to unexpected address"));
+        vm.expectRevert(bytes("EA: unexpected owner"));
         EnglishAuction(a).releaseToDAO();
         require(uint256(EnglishAuction(a).escrow()) == 1, "R2: must stay Held");
     }
@@ -155,24 +155,24 @@ contract TestDvP_R is Base {
         require(_trap() == 0, "trap");
     }
 
-    /// R4｜退款分支② 治理方托管 ⇒ 拒退（应走 settleDelivery）
+    /// R4｜退款分支② 治理方托管（NFT 在多签/治理方手中，非赢家持有）⇒ 拒退（应走 settleDelivery）
     function testR4_refundWhenGovernanceHoldsReverts() public {
         address a = _settledAuction("r4", 10e18, 12e18);
         vm.prank(MULTISIG);
         jns.claim("r4");
         vm.warp(block.timestamp + 46 days);
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: held by governance, use settleDelivery"));
+        vm.expectRevert(bytes("EA: use settleDelivery"));
         EnglishAuction(a).claimTimeoutRefund();
     }
 
-    /// R5｜退款分支③ 赢家持有 ⇒ 拒退（应走 releaseToDAO）
+    /// R5｜退款分支③ 赢家持有（= NFT 已铸给赢家且未转卖，此为「赢家持有」分支）⇒ 拒退（应走 releaseToDAO）
     function testR5_refundWhenWinnerHoldsReverts() public {
         address a = _settledAuction("r5", 10e18, 12e18);
         _claimTo(BOB, "r5");
         vm.warp(block.timestamp + 46 days);
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: already minted to winner, use releaseToDAO"));
+        vm.expectRevert(bytes("EA: use releaseToDAO"));
         EnglishAuction(a).claimTimeoutRefund();
     }
 
@@ -242,7 +242,7 @@ contract TestDvP_E is Base {
         address b = _settledAuction("e3b", 10e18, 12e18);
         _claimTo(BOB, "e3b");
         EnglishAuction(b).releaseToDAO();
-        vm.expectRevert(bytes("EA: contract does not hold NFT"));
+        vm.expectRevert(bytes("EA: no NFT held"));
         EnglishAuction(b).returnNftToGovernance();
     }
 }

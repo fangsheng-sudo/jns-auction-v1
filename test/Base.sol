@@ -2,6 +2,7 @@
 pragma solidity 0.8.0;
 
 import "../contracts/EnglishAuction.sol";
+import "../contracts/EnglishAuctionDeployer.sol";
 import "../contracts/JNSAuctionFactory.sol";
 import "../contracts/SecondaryMarket.sol";
 import "../contracts/ClaimRegistry.sol";
@@ -64,7 +65,9 @@ abstract contract Base {
         jns = MockJNS(JNS_ADDR);
         jns.initialize(MULTISIG);              // 真实 JNS 的 owner = 3/2 多签
 
-        factory  = new JNSAuctionFactory(DAO, DAO);
+        EnglishAuctionDeployer dep = new EnglishAuctionDeployer();
+        factory  = new JNSAuctionFactory(DAO, DAO, address(dep));
+        dep.setFactory(address(factory));
         market   = new SecondaryMarket(DAO, DAO);
         registry = new ClaimRegistry(DAO);
         subnames = new SubnameRegistry(DAO, DAO);

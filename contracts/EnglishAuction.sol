@@ -247,10 +247,10 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
     function releaseToDAO() external nonReentrant {
         require(escrow == EscrowState.Held, "EA: not in escrow");
         uint256 tokenId = IJNS(JNS_ADDRESS)._nslookup(name_);
-        require(tokenId != 0, "EA: name not minted yet");   // 链上铸造事实
+        require(tokenId != 0, "EA: not minted");   // 链上铸造事实
 
         address curOwner = IJNS(JNS_ADDRESS).ownerOf(tokenId);
-        require(curOwner == highestBidder, "EA: minted to unexpected address");
+        require(curOwner == highestBidder, "EA: unexpected owner");
 
         uint256 amount = highestBid;
         escrow = EscrowState.Released;
@@ -275,10 +275,10 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
     function settleDelivery() external nonReentrant {
         require(escrow == EscrowState.Held, "EA: not in escrow");
         uint256 tokenId = IJNS(JNS_ADDRESS)._nslookup(name_);
-        require(tokenId != 0, "EA: name not minted yet");
+        require(tokenId != 0, "EA: not minted");
 
         address gov = IJNS(JNS_ADDRESS).owner();
-        require(IJNS(JNS_ADDRESS).ownerOf(tokenId) == gov, "EA: NFT not held by governance");
+        require(IJNS(JNS_ADDRESS).ownerOf(tokenId) == gov, "EA: not gov-held");
 
         address winner = highestBidder;
         uint256 amount = highestBid;
@@ -306,8 +306,8 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
             "EA: not terminal"
         );
         uint256 tokenId = IJNS(JNS_ADDRESS)._nslookup(name_);
-        require(tokenId != 0, "EA: name not minted yet");
-        require(IJNS(JNS_ADDRESS).ownerOf(tokenId) == address(this), "EA: contract does not hold NFT");
+        require(tokenId != 0, "EA: not minted");
+        require(IJNS(JNS_ADDRESS).ownerOf(tokenId) == address(this), "EA: no NFT held");
 
         address gov = IJNS(JNS_ADDRESS).owner();
         IERC721(JNS_ADDRESS).transferFrom(address(this), gov, tokenId);
@@ -336,9 +336,9 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
         if (tokenId != 0) {
             address cur = IJNS(JNS_ADDRESS).ownerOf(tokenId);
             // ② 治理方托管 ⇒ 拒退（应走 settleDelivery）
-            require(cur != IJNS(JNS_ADDRESS).owner(), "EA: held by governance, use settleDelivery");
+            require(cur != IJNS(JNS_ADDRESS).owner(), "EA: use settleDelivery");
             // ③ 赢家持有 ⇒ 拒退（应走 releaseToDAO）
-            require(cur != highestBidder, "EA: already minted to winner, use releaseToDAO");
+            require(cur != highestBidder, "EA: use releaseToDAO");
             // ④ 其余（无关第三方）⇒ 落到下方放行
         }
         require(block.timestamp >= requestedAt + timeoutWindow, "EA: timeout window not reached");

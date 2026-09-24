@@ -159,7 +159,7 @@ contract TestP0Fix is Base {
         jns.claim("ev2");                              // 铸给多签（未转出）
 
         // 硬化后：托管态 releaseToDAO 必 revert（White-list 已收窄为仅 winner）
-        vm.expectRevert(bytes("EA: minted to unexpected address"));
+        vm.expectRevert(bytes("EA: unexpected owner"));
         EnglishAuction(a).releaseToDAO();
 
         // 改走原子交割

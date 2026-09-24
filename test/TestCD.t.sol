@@ -75,7 +75,7 @@ contract TestC is Base {
         _claimTo(BOB, "c6");                      // 已铸造且归赢家
         vm.warp(block.timestamp + 46 days);
         vm.prank(BOB);
-        vm.expectRevert(bytes("EA: already minted to winner, use releaseToDAO"));
+        vm.expectRevert(bytes("EA: use releaseToDAO"));
         EnglishAuction(a).claimTimeoutRefund();
     }
 }
@@ -85,7 +85,7 @@ contract TestD is Base {
     /// 未铸造 → releaseToDAO revert
     function testD1_releaseBeforeMintReverts() public {
         address a = _settledAuction("d1", 10e18, 12e18);
-        vm.expectRevert(bytes("EA: name not minted yet"));
+        vm.expectRevert(bytes("EA: not minted"));
         EnglishAuction(a).releaseToDAO();
         require(_trap() == 0, "trap");
     }
@@ -119,7 +119,7 @@ contract TestD is Base {
         jns.claim("d3");                    // 先铸给多签（= JNS.owner()），中间态
 
         // 硬化：白名单已删 `|| JNS.owner()` 分支 ⇒ 托管态不得「先付款」
-        vm.expectRevert(bytes("EA: minted to unexpected address"));
+        vm.expectRevert(bytes("EA: unexpected owner"));
         EnglishAuction(a).releaseToDAO();
         require(uint256(EnglishAuction(a).escrow()) == 1, "escrow must stay Held");
 
@@ -142,7 +142,7 @@ contract TestD is Base {
     function testD4_releaseWhenMintedToThirdPartyReverts() public {
         address a = _settledAuction("d4", 10e18, 12e18);
         _claimTo(CAROL, "d4");              // 铸错人
-        vm.expectRevert(bytes("EA: minted to unexpected address"));
+        vm.expectRevert(bytes("EA: unexpected owner"));
         EnglishAuction(a).releaseToDAO();
     }
 
