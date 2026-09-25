@@ -248,6 +248,9 @@ contracts/ 下三个上链合约分别：
   （或 `git checkout 80c338d`），再 `forge build` 即可得到下列哈希；
   字节码哈希应与本表一致（creation 口径）。
 
+> 代码对应 commit `80c338d`；文档更新于 commit `f64fa84`
+> （仅文档，contracts/ 未变，字节码基线不变）。
+
 | 合约 | creation bytes | runtime bytes | sha256(creation) 前 16 位 |
 |---|---|---|---|
 | `EnglishAuction` | 13,603 | 11,827 | `f2d419150f8e2482` |
