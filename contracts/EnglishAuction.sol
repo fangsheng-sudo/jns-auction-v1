@@ -315,6 +315,40 @@ contract EnglishAuction is ReentrancyGuard, Ownable {
         emit NftReturnedToGovernance(name_, tokenId, gov, block.timestamp);
     }
 
+    // ═══════════ 出口③b：通用 NFT 救援（仅治理方，任意 ERC721）═══════════
+    /**
+     * @dev 【A2/A3 修复·扩展】通用救援出口：治理方可将【任意 ERC721 合约】误入本合约的
+     *      NFT 退回治理方，不再限定 JNS。与 returnNftToGovernance 的区别：不限终态、
+     *      不限本场 name 的 tokenId、不限 NFT 合约，因此同时覆盖：
+     *        A2 —— 本场 tokenId 因 settle 前 emergencyCancel 卡在 escrow=None（非终态）；
+     *        A3 —— 外名 NFT（_nslookup(name_) 映射不到它）误入；
+     *        跨合约 —— 另一 ERC721 合约的 NFT 误入。
+     *
+     *  权限：仅治理方（JNS.owner()）可调。
+     *  【托管保护】仅当 token == JNS_ADDRESS 时适用：escrow==Held 且 tokenId 为本场 tokenId
+     *      且本合约即为持有人（即 settle 后、DvP 交割完成前的在途 NFT）⇒ revert，
+     *      确保资金托管与 NFT 在途的一致性不被破坏；token != JNS 不受本场托管约束。
+     *  CEI：先校验（权限 / 持有 / 托管保护），后转账。
+     *  NFT 一律用 transferFrom（不用 safeTransferFrom）。
+     */
+    function rescueStuckNft(address token, uint256 tokenId) external nonReentrant {
+        // ① 仅治理方可调
+        address gov = IJNS(JNS_ADDRESS).owner();
+        require(msg.sender == gov, "EA: not gov");
+        // ② 仅能救回「本合约正持有的」该 tokenId（任意 ERC721）
+        require(IERC721(token).ownerOf(tokenId) == address(this), "EA: no NFT held");
+        // ③ 托管保护：仅 JNS 且 Held 态下本场在途 NFT 不得提走
+        if (token == JNS_ADDRESS) {
+            uint256 ownTokenId = IJNS(JNS_ADDRESS)._nslookup(name_);
+            if (escrow == EscrowState.Held && tokenId == ownTokenId) {
+                revert("EA: in escrow");
+            }
+        }
+        // ④ 转账
+        IERC721(token).transferFrom(address(this), gov, tokenId);
+        emit NftReturnedToGovernance(name_, tokenId, gov, block.timestamp);
+    }
+
     // ═══════════ 出口②：超时退款（仅赢家本人）═══════════
     /**
      * @dev 【X-3 必修·安全阀】放行条件由「未铸造」改为「releaseToDAO 必定 revert」。

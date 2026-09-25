@@ -44,7 +44,9 @@
 
 ## 当前状态
 
-- **测试：13 suites / 140 passed / 0 failed**
+- **测试：18 suites / 211 passed / 0 failed**（原 161 + 分支补测新增 50）
+- **合约数：7**（EnglishAuction / EnglishAuctionDeployer / JNSAuctionFactory / SecondaryMarket / SubnameRegistry / ClaimRegistry / NotificationService，`deps/Deps.sol` 为依赖层）
+- **体积：** EnglishAuction 11,827 / EnglishAuctionDeployer 14,783 / JNSAuctionFactory 12,220
 - **编译：solc 0.8.0 / istanbul / optimizer 200 ⇒ 0 warning / 0 error / 0 stack-too-deep**
 - **链：** chainId 3666（Jouleverse 主网）；须 `--evm-version istanbul`（PUSH0 不可用）
 - **计价：** 全系统 WJ，J 仅作 gas
@@ -57,7 +59,7 @@
 ```
 contracts/        四批合约 + Deps（依赖层）
 script/           Deploy.s.sol（部署）/ SetterCalldata.s.sol（calldata 生成）
-test/             13 suites（含 mock：MockWJ / MockJNS）
+test/             18 suites（含 mock：MockWJ / MockJNS）
 审查材料-J25.md    ← 主交付物（§0~§9，自包含）
 设计说明.md        设计说明 + 权限矩阵 + 状态机
 风险清单.md        残余风险与缓解
@@ -76,6 +78,18 @@ docs/              展开版文档（架构 / 部署 / 安全摘要 / 依赖与�
 - 无测试网 ⇒ 仅本地 EVM 验证；JNS DAO 官方 RPC（授权端点，部署时配置）
 - 部署时通过 `--rpc-url` 指定 Jouleverse 主网 RPC（chainId **3666**）
 - 命令示例中的 `$JNS_DAO_RPC_URL` 为环境变量占位，部署时按授权端点填入
+
+## 运行测试
+
+```bash
+# ① 主套件（含分支补测 TestBranchCoverage.t.sol）：211 passed / 0 failed（18 suites）
+forge test
+
+# ② 审计测试（不变量 + A1/A2/A3 + rescueStuckNft 交叉验证，独立 Foundry 工程）
+cd audit-tests && forge test
+```
+
+> `audit-tests/` 为独立工程（自带 `foundry.toml`，`contracts` 为指向 `../contracts` 的只读符号链接），与主套件互不干扰。
 
 ## 许可
 
