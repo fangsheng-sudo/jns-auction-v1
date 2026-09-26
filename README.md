@@ -1,4 +1,6 @@
-![CI](https://github.com/fangsheng-sudo/jns-auction-v1/actions/workflows/ci.yml/badge.svg)
+> 🔴 **请审阅本分支 feat/dvp-atomic-settlement**
+> 含三处改动 · 211 passed / 0 failed · 复审包见 docs/
+> ![CI](https://github.com/fangsheng-sudo/jns-auction-v1/actions/workflows/ci.yml/badge.svg)
 # JNS 域名链上自动拍卖系统
 
 > **一句话定位**：把 JNS 主域名发放，从「人工夜拍专场」升级为 **链上无人主持、自动竞价、自动结算、全程留痕** 的公开系统。
