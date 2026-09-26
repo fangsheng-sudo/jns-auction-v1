@@ -1,3 +1,9 @@
+> ⚠️ **本分支为早期版本（v1 初稿），已被取代。**
+> 请以工作分支为准：
+> [`feat/dvp-atomic-settlement`](https://github.com/fangsheng-sudo/jns-auction-v1/tree/feat/dvp-atomic-settlement)
+> 本分支内容仅作历史追溯，不作为提案依据。
+> 提案定位：**社区讨论稿**，待 DAO 共识（经 CGC 评议）。
+
 ![CI](https://github.com/fangsheng-sudo/jns-auction-v1/actions/workflows/ci.yml/badge.svg)
 # JNS 域名链上自动拍卖系统
 
@@ -73,7 +79,7 @@ docs/              展开版文档（架构 / 部署 / 安全摘要 / 依赖与�
 ## 环境
 
 - Foundry（`forge`）；`solc 0.8.0`（`auto_detect_solc = false`）
-- 无测试网 ⇒ 仅本地 EVM 验证；JNS DAO 官方 RPC（授权端点，部署时配置）
+- 无测试网 ⇒ 仅本地 EVM 验证；RPC 端点：使用你自己的 Jouleverse 全节点，或 JNS DAO 官方公布的端点；本文件不内嵌地址
 - 部署时通过 `--rpc-url` 指定 Jouleverse 主网 RPC（chainId **3666**）
 - 命令示例中的 `$JNS_DAO_RPC_URL` 为环境变量占位，部署时按授权端点填入
 
