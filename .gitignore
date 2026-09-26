@@ -1,6 +1,9 @@
 # 构建产物与本地依赖（不纳入版本控制）
 out/
 cache/
+coverage/
+broadcast/
+lcov.info
 lib/
 
 # ⚠️ 部署用 EOA 私钥（绝不可提交）
