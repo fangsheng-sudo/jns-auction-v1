@@ -431,8 +431,11 @@ stateDiagram-v2
 
 ---
 
-## 14｜恳请重点审阅的 3 个问题
+## 14｜恳请重点审阅的 4 个问题
+
+> **机制设计要点（加价支付与退款台账）**：加价为**全额转入**——`bid()` 的 `safeTransferFrom(WJ, msg.sender, address(this), amount)` 转入本次新出价**全额 `amount`**（非差额，L163）；无 `bids[bidder]` 映射，退款用 **`pendingReturns` pull 台账**（`mapping(address=>uint256)`，L65）记录前手被顶时的应退旧款（`pendingReturns[highestBidder] += highestBid`，L167），须本人主动 `withdrawRefund()` 领回。
 
 1. **`rescueStuckNft` 托管保护边界是否充分**：当前保护为「`token == JNS_ADDRESS` 且 `escrow == Held` 且 `tokenId == 本场 tokenId` 且本合约持有 ⇒ `EA: in escrow` 必 revert」。请审阅此边界是否仍有漏洞：是否存在「非 JNS 合约但属本场交割链的 NFT」或「Held 态下非本场 tokenId」等可绕过保护的资产组合。
 2. **A1 / R9-d 定为「高·非致命、靠 runbook 强制原子交割缓解」是否认可**：该双花面需「多签违规直转 + 赢家甩币」双条件同时成立，正常路径无窗口；请判断是否应升为「致命」。
 3. **机制取舍是否合理**：英式拍卖 + 出价即托管 + 延时封顶 192h；本期不做年费，预留休眠状态位（`perUseFee = 0`）。请确认该取舍与 JNS 域名发放的实际需求匹配。
+4. **加价/退款时序是否符合预期**：同一 bidder 再次加价时，旧款**当场累加**进 `pendingReturns`（L167）——不立即转账、不累计抵扣、不结束统一退，须前手本人主动 `withdrawRefund()` 领回；当前 bidder 自身托管额统一到 settle/退款出口处理。请确认该「全额转入 + pull 退款」时序是否符合社区预期。
